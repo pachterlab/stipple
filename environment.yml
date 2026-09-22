@@ -19,7 +19,7 @@ dependencies:
   # pytorch installed from conda-forge (not pip) so it links against this
   # env's own llvm-openmp/_openmp_mutex-coordinated libomp, instead of
   # bundling a private copy that duplicate-loads alongside it and can
-  # segfault -- see README's "duplicate OpenMP" note.
+  # segfault
   - pytorch
   - pip
   - pip:
