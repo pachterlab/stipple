@@ -1,0 +1,15 @@
+# Experimental prototypes and benchmark sweep tool -- not part of the
+# tracked, supported codebase (see adr/0007 and README.md).
+/stipple/experimental/
+/benchmark/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Editor/OS
+.DS_Store

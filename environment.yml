@@ -1,0 +1,27 @@
+name: stipple
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - scikit-learn
+  - joblib
+  - numba
+  - scanpy
+  - anndata
+  - squidpy
+  - jupyterlab
+  - scikit-sparse
+  # pytorch installed from conda-forge (not pip) so it links against this
+  # env's own llvm-openmp/_openmp_mutex-coordinated libomp, instead of
+  # bundling a private copy that duplicate-loads alongside it and can
+  # segfault -- see README's "duplicate OpenMP" note.
+  - pytorch
+  - pip
+  - pip:
+      - -e .
+      - pytest
