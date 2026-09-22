@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stipple"
-version = "0.14.0"
+version = "0.15.0"
 description = "Spatial mixed-model MAP estimation with a radial-basis-function spatial field"
 requires-python = ">=3.11"
 dependencies = [
