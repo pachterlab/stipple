@@ -14,5 +14,5 @@ from __future__ import annotations
 
 from . import model, plotting, tools, utils
 
-__version__ = "0.12.0"
+__version__ = "0.16.1"
 __all__ = ["__version__", "model", "plotting", "utils", "tools"]
