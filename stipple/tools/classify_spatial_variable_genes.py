@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from ._residuals import _group_zscore_residuals, _regress_out_capture_rate
+
 if TYPE_CHECKING:
     from ..model import StippleModel
 
@@ -34,54 +36,6 @@ _ATTENUATION_THRESHOLD: float = 0.1
 _BORDERLINE_LOWER: float = 0.18  # inclusive, applied to the *rounded* (2dp) Moran's I
 _MU_QVALUE_THRESHOLD: float = 0.05
 _PHI_QVALUE_THRESHOLD: float = 0.1
-
-
-def _group_zscore_residuals(Y_ng: np.ndarray, group_idx: np.ndarray, K: int) -> np.ndarray:
-    """"Naive"/observed Pearson residual: z-score each gene's raw counts
-    *within its own group*, using the group's own empirical mean/sd of raw
-    counts (``ddof=1``) -- not the model's fitted mean/variance.
-
-    Parameters
-    ----------
-    Y_ng : np.ndarray, shape (n, G)
-        Raw observed counts.
-    group_idx : np.ndarray, shape (n,)
-        Integer group assignment, in ``[0, K)``.
-    K : int
-
-    Returns
-    -------
-    np.ndarray, shape (n, G)
-    """
-    resid = np.empty_like(Y_ng, dtype=float)
-    for k in range(K):
-        mask = group_idx == k
-        group_vals = Y_ng[mask]  # (n_k, G)
-        group_mean = group_vals.mean(axis=0)
-        group_sd = group_vals.std(axis=0, ddof=1)
-        resid[mask] = (group_vals - group_mean) / group_sd
-    return resid
-
-
-def _regress_out_capture_rate(Y_ng: np.ndarray, p_hat: np.ndarray) -> np.ndarray:
-    """Residuals of regressing every gene's column in ``Y_ng`` on the
-    shared covariate ``p_hat`` (``lm(y ~ p_hat)``'s ``resid()``), vectorized
-    across genes via one shared closed-form simple regression.
-
-    Parameters
-    ----------
-    Y_ng : np.ndarray, shape (n, G)
-    p_hat : np.ndarray, shape (n,)
-
-    Returns
-    -------
-    np.ndarray, shape (n, G)
-    """
-    x_centered = p_hat - p_hat.mean()
-    y_centered = Y_ng - Y_ng.mean(axis=0, keepdims=True)
-    denom = np.sum(x_centered**2)
-    b = (x_centered[:, None] * y_centered).sum(axis=0) / denom  # (G,)
-    return y_centered - b[None, :] * x_centered[:, None]
 
 
 def _compute_moran_i_via_squidpy(
