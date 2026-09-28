@@ -25,6 +25,24 @@ to the ADR that documents the full context, decision, and consequences.
 
 ### Added
 
+- **New `stipple.tools.set_residual_layers` tool**, writing a Pearson
+  residual and its capture-rate-regressed-out OLS residual into
+  `adata.obsm`, standalone from `classify_spatial_variable_genes` (which
+  computes the same two quantities internally, for both bases, purely to
+  feed its own Moran's I calls) -- callable without having to run gene
+  classification just to get these residuals written into `adata`. `basis`
+  (`"naive"` or `"model"`) selects which Pearson residual: `"naive"` is
+  each gene's raw counts z-scored within its own group (ignoring the
+  model's fitted mean/variance entirely); `"model"` is
+  `StippleModel.get_residuals(type="pearson")`'s, from the MAP fit's
+  mean/variance. Both write two slots suffixed by `basis`:
+  `stipple_pearson_residuals_{basis}` (a genuine Pearson residual) and
+  `stipple_capture_rate_ols_residuals_{basis}` (that Pearson residual's OLS
+  residual after regressing out the estimated capture rate -- a residual
+  *of* a residual, deliberately not named "pearson" since it isn't one).
+  The shared `_group_zscore_residuals`/`_regress_out_capture_rate` helpers
+  moved to a new private `stipple.tools._residuals`, used by both this and
+  `classify_spatial_variable_genes`.
 - **New `stipple.tools.classify_spatial_variable_genes` tool**, called after
   a model is fitted and `group_de_wald_test` has been run. Ports
   `stipple/experimental/classification/plot-classification.R`'s two-stage
@@ -64,6 +82,32 @@ to the ADR that documents the full context, decision, and consequences.
 
 ### Changed
 
+- **Renamed two `classify_spatial_variable_genes` label values**:
+  `"Field-independent SVG"` -> `"SVG"`, `"Field-aligned SVG"` -> `"Field
+  aligned"` (so the mixed category is now `"DVG + Field aligned"`, not
+  `"DVG + Field-aligned SVG"`). `"Null Gene"` and `"DVG"` are unchanged.
+  Applies to both the hard `classification` column and the soft
+  `confidence` labels below.
+- **`classify_spatial_variable_genes`'s default return is now minimal:
+  `gene` and `classification` (renamed from `classification_all`) only.**
+  The full diagnostic frame from prior versions (raw Moran's I for both
+  residual bases, every boolean flag, `classification_obs`/`classification_fitted`,
+  `classification_de_wald_mu`/`classification_de_wald_phi`) is no longer
+  part of the public return value; those quantities are still computed
+  internally to drive the cascade, just not exposed. New `soft` parameter:
+  `soft=True` returns a tidy/long `DataFrame` (`gene`, `classification`,
+  `confidence`) instead -- a continuous, 5-label soft generalization of the
+  hard cascade's own precedence (`SVG` >
+  `DVG + Field aligned` > `Field aligned`/`DVG`/`Null Gene`), built
+  from the naive/observed residual's Moran's I (stage 1/2, the same one
+  behind `classification_obs`) and the same model-based Wald DE test the
+  hard cascade uses, each centered on its own hard threshold via a
+  logistic; the 5 confidences for a gene always sum to 1. Re-validated
+  against the same real-data reference used when this tool was first added
+  (`gene_classification_v2.csv`): 99.0% exact `classification` agreement
+  across 1049 genes (1038/1049), consistent with the original 98.9%
+  validation above -- the refactor changed the return shape, not the
+  underlying classification logic.
 - **`compute_group_expression_uncertainty`/`compute_group_expression_uncertainty_block`:
   minimum-effect-size test in log2 units, applied to `mu` and `phi`, tidy
   `DataFrame` return instead of a dict.** The pairwise test is now
