@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+from scipy.special import expit
 
 from ._residuals import _group_zscore_residuals, _regress_out_capture_rate
 
@@ -90,9 +91,9 @@ def _compute_moran_i_via_squidpy(
 
 def _compute_is_flagged(classification_obs: np.ndarray, classification_fitted: np.ndarray) -> np.ndarray:
     """``classification_obs``/``classification_fitted`` disagree, and at
-    least one of them is ``"Field-independent SVG"``."""
-    obs_indep = classification_obs == "Field-independent SVG"
-    fitted_indep = classification_fitted == "Field-independent SVG"
+    least one of them is ``"SVG"``."""
+    obs_indep = classification_obs == "SVG"
+    fitted_indep = classification_fitted == "SVG"
     return (classification_obs != classification_fitted) & (obs_indep | fitted_indep)
 
 
@@ -108,7 +109,7 @@ def _classify_all(
     see the module docstring) from ``plot-classification.R`` lines 157-190.
     First-match-wins, same as R's ``case_when``.
     """
-    obs_indep = classification_obs == "Field-independent SVG"
+    obs_indep = classification_obs == "SVG"
     obs_not = np.char.find(classification_obs.astype(str), "Not") >= 0
     obs_align = np.char.find(classification_obs.astype(str), "align") >= 0
     mu_not = classification_de_wald_mu == "Not DE mu"
@@ -125,15 +126,15 @@ def _classify_all(
         ~is_attenuated & obs_indep & ~mu_not,
     ]
     choicelist = [
-        "Field-independent SVG",
-        "Field-independent SVG",
-        "Field-independent SVG",
+        "SVG",
+        "SVG",
+        "SVG",
         "Null Gene",
         "DVG",
-        "DVG + Field-aligned SVG",
-        "Field-aligned SVG",
+        "DVG + Field aligned",
+        "Field aligned",
         "DVG",
-        "Field-independent SVG",
+        "SVG",
     ]
     classification_all = np.select(condlist, choicelist, default=None)
     return pd.array(classification_all, dtype="string")
@@ -148,10 +149,13 @@ def classify_spatial_variable_genes(
     attenuation_threshold: float = _ATTENUATION_THRESHOLD,
     mu_qvalue_threshold: float = _MU_QVALUE_THRESHOLD,
     phi_qvalue_threshold: float = _PHI_QVALUE_THRESHOLD,
+    soft: bool = False,
+    confidence_moran_scale: float = 0.02,
+    confidence_q_scale: float = 0.02,
 ) -> pd.DataFrame:
     """Classify every gene as ``"Null Gene"``, ``"DVG"``, ``"DVG + Field
-    -aligned SVG"``, ``"Field-aligned SVG"``, or ``"Field-independent
-    SVG"`` (or ``NaN`` if none of the classification rules match), from a
+    aligned"``, ``"Field aligned"``, or ``"SVG"`` (or ``NaN`` if none of
+    the classification rules match), from a
     fitted model and a precomputed :func:`group_de_wald_test` result.
 
     For each gene: the "naive"/observed Pearson residual (raw counts
@@ -187,16 +191,35 @@ def classify_spatial_variable_genes(
     mu_qvalue_threshold, phi_qvalue_threshold
         Thresholds as in the R source (defaults: ``0.2``, ``0.4``, ``0.1``,
         ``0.05``, ``0.1`` respectively).
+    soft
+        ``False`` (default): return the hard classification only. ``True``:
+        instead return a **tidy, long** DataFrame with a soft confidence for
+        each of the 5 possible labels per gene (see Returns) -- a continuous
+        generalization of the hard cascade's precedence (``SVG`` >
+        ``DVG + Field aligned`` > ``Field aligned``/``DVG``/
+        ``Null Gene``), built from two logistic-transformed evidence axes
+        (spatially variable at stage 1; still spatially variable at stage 2,
+        i.e. after regressing out the capture-rate field -- both computed on
+        the NAIVE/observed residual, the same one behind
+        ``classification_obs``, not the model-fitted one) and the same
+        model-based Wald DE test used by the hard cascade, each centered on
+        its own hard threshold with a bandwidth of ``confidence_moran_scale``
+        / ``confidence_q_scale``. A gene sitting near a decision boundary
+        gets real confidence mass on both neighboring labels instead of a
+        falsely-certain hard call; the 5 confidences for a given gene always
+        sum to 1. The DE evidence is always the model-based Wald test
+        (never a residual-only or count-only test), matching the hard
+        cascade's own architecture, which anchors DE detection to the model
+        regardless of which residual is used for the spatial axis.
 
     Returns
     -------
     pandas.DataFrame
-        One row per gene: raw Moran's I (``moran_resid_stage1/2``,
-        ``moran_fit_resid_stage1/2``), every boolean flag (``is_svg_stage1/2``,
-        ``is_fit_svg_stage1/2``, ``is_attenuated``, ``is_high_svg_stage1``,
-        ``is_borderline``, ``is_flagged``), ``classification_obs``,
-        ``classification_fitted``, ``classification_de_wald_mu/phi``, and
-        ``classification_all``.
+        ``soft=False`` (default): one row per gene, columns ``gene`` and
+        ``classification`` (the hard label) only.
+        ``soft=True``: tidy/long, 5 rows per gene, columns ``gene``,
+        ``classification`` (one of the 5 possible labels), and
+        ``confidence`` (that label's soft score, in ``[0, 1]``).
     """
     model._check_fitted()
     if "mu_qvalue" not in wald_result.columns:
@@ -241,12 +264,12 @@ def classify_spatial_variable_genes(
 
     classification_obs = np.select(
         [is_svg_stage1 & is_svg_stage2, is_svg_stage1 & ~is_svg_stage2],
-        ["Field-independent SVG", "Field-aligned SVG"],
+        ["SVG", "Field aligned"],
         default="Not Classified",
     )
     classification_fitted = np.select(
         [is_fit_svg_stage1 & is_fit_svg_stage2, is_fit_svg_stage1 & ~is_fit_svg_stage2],
-        ["Field-independent SVG", "Field-aligned SVG"],
+        ["SVG", "Field aligned"],
         default="Not Classified",
     )
 
@@ -277,25 +300,49 @@ def classify_spatial_variable_genes(
         classification_obs, classification_de_wald_mu, is_flagged, is_borderline, is_attenuated,
     )
 
-    return pd.DataFrame(
-        {
-            "gene": gene_names,
-            "moran_resid_stage1": moran_resid_stage1,
-            "moran_resid_stage2": moran_resid_stage2,
-            "moran_fit_resid_stage1": moran_fit_resid_stage1,
-            "moran_fit_resid_stage2": moran_fit_resid_stage2,
-            "is_svg_stage1": is_svg_stage1,
-            "is_svg_stage2": is_svg_stage2,
-            "is_fit_svg_stage1": is_fit_svg_stage1,
-            "is_fit_svg_stage2": is_fit_svg_stage2,
-            "is_attenuated": is_attenuated,
-            "is_high_svg_stage1": is_high_svg_stage1,
-            "is_borderline": is_borderline,
-            "is_flagged": is_flagged,
-            "classification_obs": classification_obs,
-            "classification_fitted": classification_fitted,
-            "classification_de_wald_mu": classification_de_wald_mu,
-            "classification_de_wald_phi": classification_de_wald_phi,
-            "classification_all": classification_all,
-        }
+    if not soft:
+        return pd.DataFrame({"gene": gene_names, "classification": classification_all})
+
+    return _soft_confidences(
+        gene_names, moran_resid_stage1, moran_resid_stage2, wald_result,
+        moran_svg_threshold=moran_svg_threshold, mu_qvalue_threshold=mu_qvalue_threshold,
+        moran_scale=confidence_moran_scale, q_scale=confidence_q_scale,
     )
+
+
+def _soft_confidences(
+    gene_names: list[str],
+    moran_resid_stage1: np.ndarray,
+    moran_resid_stage2: np.ndarray,
+    wald_result: pd.DataFrame,
+    moran_svg_threshold: float,
+    mu_qvalue_threshold: float,
+    moran_scale: float,
+    q_scale: float,
+) -> pd.DataFrame:
+    """Tidy/long soft-confidence table -- see ``soft`` in
+    :func:`classify_spatial_variable_genes`'s docstring for the design.
+
+    Spatial evidence (``P1``/``P2``) comes from the NAIVE/observed residual
+    (``moran_resid_stage1/2`` -- the same z-scored-within-group residual as
+    ``classification_obs``, not the model-fitted one), by deliberate choice.
+    DE evidence (``D``) is always the model-based Wald test regardless."""
+    q_min = wald_result.groupby("gene")["mu_qvalue"].min().reindex(gene_names).to_numpy()
+
+    P1 = expit((moran_resid_stage1 - moran_svg_threshold) / moran_scale)
+    P2 = expit((moran_resid_stage2 - moran_svg_threshold) / moran_scale)
+    D = expit((mu_qvalue_threshold - q_min) / q_scale)
+
+    label_confidences = {
+        "SVG": P1 * P2,
+        "DVG + Field aligned": P1 * (1 - P2) * D,
+        "Field aligned": P1 * (1 - P2) * (1 - D),
+        "DVG": (1 - P1) * D,
+        "Null Gene": (1 - P1) * (1 - D),
+    }
+    rows = [
+        {"gene": gene, "classification": label, "confidence": float(conf[i])}
+        for i, gene in enumerate(gene_names)
+        for label, conf in label_confidences.items()
+    ]
+    return pd.DataFrame(rows)
